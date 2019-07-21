@@ -1,0 +1,243 @@
+---
+title: "Practical Machine Learning - Course Project"
+author: "Kyle Kaicheng Bao"
+date: "20 July 2019"
+output: html_document
+---
+
+## Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: [http://groupware.les.inf.puc-rio.br/har](http://groupware.les.inf.puc-rio.br/har) (see the section on the Weight Lifting Exercise Dataset).
+
+## Environment Setup
+
+```{r, message=FALSE}
+library(tools)
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(rpart)
+library(rattle)
+library(randomForest)
+library(gbm)
+library(naivebayes)
+library(MASS)
+library(ipred)
+library(plyr)
+library(e1071)
+library(mgcv)
+library(doParallel)
+```
+
+## Data Loading and Training / Test Set Preparation
+
+```{r, message=FALSE}
+md5.training <- "d79ca60fa5e9c177c1e801980e268132"
+md5.testing <- "1a2f314ffbcfbc257efce5cbe7df4b3f"
+
+if (!(file.exists("pml-training.csv") & md5sum("pml-training.csv") == md5.training)) {
+  download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",
+                "pml-training.csv")
+}
+
+if (!(file.exists("pml-testing.csv") & md5sum("pml-testing.csv") == md5.testing)) {
+  download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",
+                "pml-testing.csv")
+}
+```
+
+```{r}
+training <- read.csv("pml-training.csv")
+testing <- read.csv("pml-testing.csv")
+
+dim(training)
+dim(testing)
+```
+
+We shall split the training data further into 70% training and 30% testing data. This will help us in cross validating our models.
+
+```{r}
+set.seed(2019)
+
+in.train <- createDataPartition(training$classe,  p = 0.7, list = FALSE)
+training.train <- training[in.train, ]
+training.test <- training[-in.train, ]
+dim(training.train)
+dim(training.test)
+```
+
+## Data Cleaning
+
+Let us take a look at the 160 variables in the dataset:
+
+```{r}
+str(training.train, list.len = ncol(training.train))
+```
+
+Firstly, we note that the first few user and time related variables `X`, `user_name`, `raw_timestamp_part_1`, `raw_timestamp_part_2`, `cvtd_timestamp`, `new_window`, and `num_window`, are not relevant to our target predictive model. Hence, we shall remove them.
+
+We also note that several variables contain `NAs` and we have to either imput the missing/invalid data or remove the `NAs`.
+
+```{r}
+has.na <- training.train[, colSums(is.na(training.train)) > 0]
+colSums(is.na(has.na))/nrow(has.na)
+```
+
+Since the variables that contain `NAs` have a large proportion of `NAs` to actual data (~97% NAs), we cannot reliability imput the missing data using methods such as K Nearest Neighbour. Furthermore, the variables containing `NAs` are summary statistics of the raw data from the accelerometers (namely Euler angles of roll, pitch, and length of acceleration vector), removing them will not result in significant data loss. Hence, they shall be removed.
+
+Several *kurtosis* variables contain division-by-zero errors `#DIV/0!`. We shall remove these as well. We will also remove any missing values that are labelled as a blank character string `""`.
+
+```{r}
+training.train <- training.train[, -(1:7)]
+training.train <- training.train[, colSums(is.na(training.train)) == 0 &
+                                   colSums(training.train == "#DIV/0!") == 0 &
+                                   colSums(training.train == "") == 0]
+str(training.train)
+```
+
+The data looks alot cleaner now. We shall proceed.
+
+## Model Selection Strategy
+
+We shall train the following models:
+
+- `rpart` Classification and Regression Trees
+- `rf` Random Forest
+- `gbm` Stochastic Gradient Boosting
+- `naive_bayes` Naive Bayes
+- `lda` Linear Discriminant Analysis
+- `treebag` Bagged Classification and Regression Trees
+
+Parameter tuning is outside of the scope of this report. Default parameters shall be used for each algorithm.
+
+We use each trained model to predict the `training.test` subset of the `training` data set for cross validation. We will then consider models with accuracy greater than 70%. If there are 2 or less models in this category, then we shall use most accurate model. If there are 3 or more models, then the top 3 accurate models will be used together. That is, the top 3 models will be used to predict the `testing` data set, and the final predictions will be the most voted prediction (each model gets equal vote). Should all 3 models predict different result, the most accurate model's prediction will be used instead.
+
+## Classification and Regression Trees
+
+```{r}
+cl <- makePSOCKcluster(2)
+registerDoParallel(cl)
+fit.rpart <- train(classe ~ ., data = training.train, method = "rpart")
+stopCluster(cl)
+```
+
+```{r}
+fancyRpartPlot(fit.rpart$finalModel, "Classification Tree Model")
+```
+
+```{r}
+pred.rpart <- predict(fit.rpart, newdata = training.test)
+confusionMatrix(pred.rpart, training.test$classe)
+```
+
+The prediction accuracy is 50% and not very useful. We shall explore other models.
+
+## Random Forest
+
+```{r}
+cl <- makePSOCKcluster(2)
+registerDoParallel(cl)
+fit.rf <- train(classe ~ ., data = training.train, method = "rf")
+stopCluster(cl)
+```
+
+```{r}
+pred.rf <- predict(fit.rf, newdata = training.test)
+confusionMatrix(pred.rf, training.test$classe)
+```
+
+This model performed really well with an accuracy of 99%. We shall include this in the final combined model.
+
+## Stochastic Gradient Boosting
+
+```{r}
+cl <- makePSOCKcluster(2)
+registerDoParallel(cl)
+fit.gbm <- train(classe ~ ., data = training.train, method = "gbm", verbose = FALSE)
+stopCluster(cl)
+```
+
+```{r}
+pred.gbm <- predict(fit.gbm, newdata = training.test)
+confusionMatrix(pred.gbm, training.test$classe)
+```
+
+With an accuracy of 96%, the GBM model performed extremely well.
+
+## Naive Bayes
+
+```{r}
+cl <- makePSOCKcluster(2)
+registerDoParallel(cl)
+fit.naive_bayes <- train(classe ~ ., data = training.train, method = "naive_bayes")
+stopCluster(cl)
+```
+
+```{r}
+pred.naive_bayes <- predict(fit.naive_bayes, newdata = training.test)
+confusionMatrix(pred.naive_bayes, training.test$classe)
+```
+
+Unfortunately, the Naive Bayes model barely missed our cut-off accuracy requirement of 75%. The 75% cutoff is also not within the model's 95% CI. The Naive Bayes model will not be included in the final model.
+
+## Linear Discriminant Analysis
+
+```{r}
+cl <- makePSOCKcluster(2)
+registerDoParallel(cl)
+fit.lda <- train(classe ~ ., data = training.train, method = "lda")
+stopCluster(cl)
+```
+
+```{r}
+pred.lda <- predict(fit.lda, newdata = training.test)
+confusionMatrix(pred.lda, training.test$classe)
+```
+
+Although an accuracy of 70% is decent, it does not meet the cutoff requirement for the final combined model.
+
+## Bagged Classification and Regression Trees
+
+```{r}
+cl <- makePSOCKcluster(2)
+registerDoParallel(cl)
+fit.treebag <- train(classe ~ ., data = training.train, method = "treebag")
+stopCluster(cl)
+```
+
+```{r}
+pred.treebag <- predict(fit.treebag, newdata = training.test)
+confusionMatrix(pred.treebag, training.test$classe)
+```
+
+This tree-based model also has a very high accuracy of 99%.
+
+## Combined Predictive Model and Predictions
+
+We are ready to predict the actual `testing` data.
+
+We shall combine predictions from the following 3 predictive models:
+
+- `rf` Random Forest
+- `gbm` Stochastic Gradient Boosting
+- `treebag` Bagged Classification and Regression Trees
+
+Since the `rf` Random Forest model has the highest accuracy, in the case of no majority amongst the 3 models, the Random Forest model's prediction will be used instead. Else, the majority prediction will be used as the final prediction.
+
+```{r}
+results <- data.frame(rf = predict(fit.rf, newdata = testing),
+                      gbm = predict(fit.gbm, newdata = testing),
+                      treebag = predict(fit.treebag, newdata = testing))
+                      
+results <- mutate(results,
+                  final = ifelse(rf != gbm & rf != treebag & gbm != treebag, rf, 
+                                 ifelse(rf == gbm, gbm, treebag)))
+
+results$final <- levels(training$classe)[results$final] # relabel as factors
+```
+
+Final predictions are in the `final` column.
+
+```{r}
+results
+```
