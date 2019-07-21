@@ -236,8 +236,8 @@ results <- mutate(results,
 results$final <- levels(training$classe)[results$final] # relabel as factors
 ```
 
-Final predictions are in the `final` column.
+Final predictions are in the `final` column. *(results not displayed in this report to preserve answer integrity)*
 
-```{r}
+```{r, echo = FALSE}
 results
 ```

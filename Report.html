@@ -990,29 +990,9 @@ results &lt;- mutate(results,
                                  ifelse(rf == gbm, gbm, treebag)))
 
 results$final &lt;- levels(training$classe)[results$final] # relabel as factors</code></pre>
-<p>Final predictions are in the <code>final</code> column.</p>
+<p>Final predictions are in the <code>final</code> column. <b>(results not displayed in this report to preserve answer integrity)</b></p>
 <pre class="r"><code>results</code></pre>
-<pre><code>##    rf gbm treebag final
-## 1   B   B       B     B
-## 2   A   A       A     A
-## 3   B   B       B     B
-## 4   A   A       A     A
-## 5   A   A       A     A
-## 6   E   E       E     E
-## 7   D   D       D     D
-## 8   B   D       B     B
-## 9   A   A       A     A
-## 10  A   A       A     A
-## 11  B   B       B     B
-## 12  C   C       C     C
-## 13  B   B       B     B
-## 14  A   A       A     A
-## 15  E   E       E     E
-## 16  E   E       E     E
-## 17  A   A       A     A
-## 18  B   B       B     B
-## 19  B   B       B     B
-## 20  B   B       B     B</code></pre>
+
 </div>
 
 
